@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.uv-cache/
+dist/
+build/
+
+# Local scratch, session notes and tool installs; never shipped
+/.local/
+/agent-state/
+/codex-session*.md
+
+# Optimizer/Driveline session state if a run is started in this checkout
+/experiments/
+/autoresearch.jsonl
+/autoresearch.md
+/autoresearch.sh
+/checks.sh
+/.autoresearch-off
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

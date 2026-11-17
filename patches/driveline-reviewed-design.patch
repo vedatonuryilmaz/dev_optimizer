@@ -1,0 +1,96 @@
+diff -ruN a/skills/autoresearch/scripts/codex_loop.py b/skills/autoresearch/scripts/codex_loop.py
+--- a/skills/autoresearch/scripts/codex_loop.py
++++ b/skills/autoresearch/scripts/codex_loop.py
+@@ -198,6 +198,8 @@
+     p.add_argument("--max-seconds", type=positive, default=3600, help="supervisor wall time (default: 3600)")
+     p.add_argument("--turn-timeout", type=positive, default=900, help="seconds per Codex invocation (default: 900)")
+     p.add_argument("--model", help="optional model override; otherwise use Codex configuration")
++    p.add_argument("--reviewed-design", metavar="PATH",
++                   help="reviewed design whose ranked hypotheses guide each turn (prompt-only)")
+     p.add_argument("--protect", action="append", default=[], metavar="PATH", help="additional locked scorer/data/split file (repeatable)")
+     p.add_argument("--status", action="store_true", help="read state and exit without writes or Codex")
+     p.add_argument("--dry-run", action="store_true", help="validate and print command without writes or Codex")
+@@ -223,6 +225,11 @@
+         for name in args.protect:
+             if not (root / name).is_file():
+                 raise LoopError(f"explicit --protect path must be an existing regular file: {name}")
++        if args.reviewed_design is not None:
++            design = Path(args.reviewed_design).resolve()
++            if not design.is_file():
++                raise LoopError(f"--reviewed-design must be an existing regular file: {args.reviewed_design}")
++            args.reviewed_design = str(design)
+         hashes = protected_hashes(root, paths)
+         config = state["config"]
+         if is_paused(root):
+@@ -283,19 +290,45 @@
+             if logs.is_symlink() or (root / "experiments").is_symlink():
+                 raise LoopError("experiment log directories must not be symlinks")
+             log_dir = Path(tempfile.mkdtemp(prefix=f"run-{before['next_run']}-", dir=logs))
++            turn_budget = max(1, int(min(args.turn_timeout, remaining)))
+             prompt = (
+                 f"Use the autoresearch skill at {SKILL / 'SKILL.md'}. "
+-                "This is one bounded supervisor turn. Read autoresearch.md, autoresearch.jsonl, "
+-                "and experiments/worklog.md. Complete exactly ONE experiment: change only scoped files, "
+-                "run the locked benchmark and correctness checks, keep or restore only your experiment's "
+-                "changes, append exactly one valid result with ar-log.sh, update the dashboard/worklog, "
+-                "then end this turn. Do not start a supervisor or run a second experiment. "
++                f"This is one bounded supervisor turn (turn timeout: {turn_budget}s). "
++                "Read autoresearch.md, autoresearch.jsonl, and experiments/worklog.md. "
++                "Complete exactly ONE experiment: change only scoped files and run the locked benchmark "
++                "first. If the benchmark fails or emits no valid metric, restore and log crash (metric 0); "
++                "if a prior keep exists and the metric does not beat the current best by more than "
++                "noiseFloor, skip correctness checks, restore, and log discard at once; run correctness "
++                "checks (if present) only when no prior keep exists or the metric beats the current best "
++                "by more than noiseFloor, logging checks_failed on check failure. Once the benchmark "
++                "(and checks, when run) finishes, make no further code edits: keep or restore only your "
++                "experiment's changes, append exactly one valid result with ar-log.sh, update the "
++                "dashboard/worklog, then end this turn. Do not start a supervisor or run a second experiment. "
+                 "Do not edit the config, reset budgets, switch branches, alter gitignore, or edit the "
+                 "runner/skill. Do not install software, contact people, push, deploy, or acquire compute "
+                 "unless explicitly authorized in the session. "
+                 f"Locked files: {json.dumps(paths)}. Expected result run: {before['next_run']}, "
+                 f"segment: {before['segment']}. If blocked, explain and end without inventing a result."
+             )
++            if args.reviewed_design:
++                prompt += (
++                    f" Read the reviewed design at {json.dumps(args.reviewed_design)}. Choose this "
++                    "experiment's hypothesis from its ranked hypotheses: take the highest-ranked one "
++                    "that autoresearch.jsonl and experiments/worklog.md do not show as settled or "
++                    "deferred, and put only that hypothesis id first in the result description. If you "
++                    "find that the hypothesis cannot work until another untried listed hypothesis "
++                    "lands, do not spend more attempts on it: record '<id> DEFERRED (blocked on <id>)' "
++                    "in experiments/worklog.md, restore the checkout and log this turn as a discard "
++                    "with the current best metric and description '<id> DEFERRED (blocked on <id>)', so "
++                    "the next turn takes the blocking hypothesis; a deferred hypothesis becomes "
++                    "eligible again once its blocker is kept, and if its blocker settles without a keep "
++                    "it is settled too. You choose the implementation and may retry a hypothesis with a "
++                    "different implementation (up to 3 non-keeping attempts). Do not pursue a mechanism "
++                    "the design does not list; note such ideas in experiments/worklog.md under "
++                    "'Proposed for review'. If no reviewed hypothesis is left to try, leave the "
++                    "checkout clean and append exactly one discard result with the current best metric "
++                    "and a description starting 'EXHAUSTED:'."
++                )
+             print(f"[autoresearch] starting run {before['next_run']}; logs: {log_dir}", flush=True)
+             run_turn([*command, "--output-last-message", str(log_dir / "final.md"), "-"],
+                      prompt, root, log_dir, min(args.turn_timeout, remaining))
+@@ -313,6 +346,9 @@
+             if git_metadata_roots(root) != metadata_roots:
+                 raise LoopError("Git metadata directories changed")
+             history = after_history
++            if args.reviewed_design and json.loads(after_history.splitlines()[-1]).get("description", "").startswith("EXHAUSTED:"):
++                pause(root, "reviewed hypotheses exhausted; return to review")
++                return 0
+             if after["budget_reached"]:
+                 pause(root, after["budget_reason"])
+                 return 0
+diff -ruN a/tests/test_codex_loop.py b/tests/test_codex_loop.py
+--- a/tests/test_codex_loop.py
++++ b/tests/test_codex_loop.py
+@@ -22,6 +22,7 @@
+ (root / "invocations").open("a").write(json.dumps(sys.argv[1:]) + "\\n")
+ (root / ".autoresearch-test-parent.pid").write_text(str(os.getpid()))
+ prompt = sys.stdin.read()
++(root / ".autoresearch-test-prompt.txt").write_text(prompt)
+ if "exactly ONE experiment" not in prompt:
+     sys.exit(9)
+ if mode == "error":

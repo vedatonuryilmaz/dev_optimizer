@@ -1,0 +1,31 @@
+# Experiment artifacts (created by autoresearch sessions)
+experiments/*
+!experiments/.gitkeep
+!experiments/worklog.md
+autoresearch.jsonl
+autoresearch-dashboard.md
+autoresearch-report.md
+autoresearch.md
+autoresearch.sh
+autoresearch.ideas.md
+.autoresearch-off
+.autoresearch-inspect
+.autoresearch.jsonl.lock
+.autoresearch-codex.lock
+plots/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.venv/
+
+# External data
+third_party/
+
+# Tooling
+.osgrep/
+
+# Driveline session state (not part of the plugin)
+brain/

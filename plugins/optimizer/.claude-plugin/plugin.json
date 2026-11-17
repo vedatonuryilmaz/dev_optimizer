@@ -1,0 +1,5 @@
+{
+  "name": "optimizer",
+  "version": "0.1.0",
+  "description": "Run Driveline autoresearch on hypotheses from an EGM-reviewed design. Requires the optimizer CLI and the separate EGM plugin."
+}
